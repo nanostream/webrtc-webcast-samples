@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<!-- nanoStream WebRTC Webcast / Broadcast to RTMP
+     (c) 2014-2019 nanocosmos gmbh, All rights reserved
+     http://www.nanocosmos.de 
+     V 2019-03
+-->
+<html>
+
+<head>
+    <title>nanoStream WebRTC.live minimal broadcast sample</title>
+
+    <!-- nanoStream WebRTC.live and bintu API -->
+
+    
+    <!-- local release version -->
+    <script src="./js/api/webrtc/nano.webrtc.5.1.2.min.js"></script>
+    <script src="./js/api/bintu/nano.bintu.0.7.min.js"></script>
+    
+
+<script src="nano.config.js"></script>
+
+    <script>
+        // global nano variables
+
+        var nano = {}; // { rtcuser, config, bintu, bintuTags, ingest, streamid, playoutURL };
+
+        // init nanoStream APIs
+
+        nano.init = function() {
+
+            console.log("nano_init");
+
+            var gconfig = window.NANOCONFIG; // global config, included from nano.config.js
+
+            // Authentication
+            // for your own custom version you may add your config here or in config.js
+            var bintuApiKey = gconfig.bintu.apikey;
+            var bintuApiUrl = gconfig.bintu.apiurl;
+            var token = gconfig.webrtc.token;
+            token = token ?  encodeURIComponent(JSON.stringify(token)) : '';
+
+            if ((token == "" && bintuApiKey == "") || bintuApiUrl == "") {
+                showError("bintu token or api key missing")
+            }
+
+            // Create rtc user
+            nano.rtcuser = new window.nanowebrtc.user();
+
+            // register event handlers
+            nano.registerRTCUserListeners(nano);
+
+            // rtcUser signin options
+            var signinOptions = {
+                 server: gconfig.webrtc.server, // do not change the default
+                 userName: 'sampleBroadcaster1', // any value, no spaces
+                 room: 'sampleRoom1', // any value, no spaces
+                 token: token, // your token
+                 bintuApiKey: bintuApiKey // your api key
+            };
+
+            // rtc config: video codec and bitrates
+            var rtcConfig = {
+                 bitrates: {
+                   videoSendInitialBitrate: gconfig.webrtc.videosendinitialbitrate, // initial webrtc bitrate kbits/s
+                   videoSendBitrate: gconfig.webrtc.videosendbitrate // average webrtc bitrate kbits/s
+                 }
+            };
+
+            // sign in to the nanoStream RTC API
+            nano.rtcuser.signIn(signinOptions);
+
+            // set rtc config (rtc bitrate)
+            nano.rtcuser.setConfig(rtcConfig);
+
+            // enable stats every 2 seconds, shown with "ReceivedWebRTCStats"
+            nano.rtcuser.enableStats(true,2000); 
+
+            // Initialize nanoStream Bintu to obtain a live stream 
+            nano.bintu = new Bintu(bintuApiUrl, bintuApiKey, true, false);
+            nano.bintuTags = ['camera1, test, webrtc']; // Optionally add tags to the stream
+            nano.playoutURL = '';
+
+        };
+
+        // start camera and microphone (getusermedia)
+
+        nano.startCam = function() {
+
+            if(!nano.rtcuser) {
+                logStatus('No rtcUser, please "init" first');
+            }
+
+            // Get camera and microphone and start preview
+            nano.rtcuser.getDevices();
+            nano.rtcuser.on('ReceivedDeviceList', function(event) {
+
+                // Available devices
+                var audioDevices = event.data.devices.audiodevices;
+                var videoDevices = event.data.devices.videodevices;
+
+                var videoDeviceConfig = {
+                    device: 0 // choose first device found
+                };
+                var audioDeviceConfig = {
+                    device: 0 // choose first device found
+                };
+                var videoElement = "video-local";
+
+                var config = {
+                    videoDeviceConfig: videoDeviceConfig,
+                    audioDeviceConfig: audioDeviceConfig,
+                    elementId: videoElement
+                };
+
+                console.log("Starting camera");
+
+                nano.rtcuser.startPreview(config);
+            });
+
+        };
+
+        // Register API event handlers
+
+        nano.registerRTCUserListeners = function(nano) {
+
+            nano.rtcuser.on("SignInSuccess", function(event) {
+                logStatus("SignInSuccess");
+            });
+
+            nano.rtcuser.on("SignInError", function(event) {
+                logStatus("SignInError");
+            });
+
+            nano.rtcuser.on('StartPreviewSuccess', function(event) {
+                logStatus("Camera started", event);
+            });
+
+            nano.rtcuser.on('StartPreviewError', function(event) {
+                showError("Camera error", event.data.text);
+            });
+
+            nano.rtcuser.on('StartBroadcastSuccess', function(event) {
+                logStatus("StartBroadcastSuccess", event);
+            });
+
+            nano.rtcuser.on('StartBroadcastError', function(event) {
+                showError(event);
+            });
+
+            nano.rtcuser.on('BroadcastStatus', function(event) {
+                logStatus("BroadcastStatus", event);
+                if(event.data && event.data.text) {
+                  logStatus("BroadcastStatus: "+event.data.text);
+                }
+            });
+
+            nano.rtcuser.addListener('ReceivedWebRTCStats', nano.showWebRTCStats.bind(this));
+        };
+
+        nano.showWebRTCStats = function (event) {
+          if(event.name=="ReceivedWebRTCStats") {
+            logStats("STATS: "+JSON.stringify(event.data.results));
+          }
+        };
+
+        // create bintu ingest stream to send a live stream 
+
+        nano.createStream = function() {
+            logStatus("Creating a new Bintu stream");
+            nano.bintu.createStream(nano.bintuTags, function success(request) {
+                // response contains ingest server and stream names / ids
+                var response = JSON.parse(request.responseText);
+                nano.ingest = response.ingest;
+                nano.streamid = response.id;
+                nano.playoutURL = 'https://demo.nanocosmos.de/nanoplayer/release/nanoplayer.html?bintu.streamid=' + nano.streamid;
+                if(NANOCONFIG.bintu.apiurl) nano.playoutURL += '&bintu.apiurl=' + NANOCONFIG.bintu.apiurl;
+                logStatus('Bintu Stream Created - Playout URL: ' + nano.playoutURL);
+            }, function onerror(result) {
+                if (result.request && result.request.response)
+                    logStatus(result.request.response);
+                else
+                    logStatus(error);
+            });
+        };
+
+        // start broadcast to bintu / nanoStream Cloud
+
+        nano.startBroadcast = function() {
+            // get stream config / ingest from global object
+            if (!nano.ingest) {
+                showError("no ingest stream url");
+                return;
+            }
+            var rtmp = nano.ingest.rtmp;
+            var url = rtmp.url;
+            var streamname = rtmp.streamname;
+            var broadcastConfig = {
+                transcodingTargets: {
+                    output: url,
+                    streamname: streamname,
+                }
+            };
+            logStatus("Starting Broadcast");
+            nano.rtcuser.startBroadcast(broadcastConfig);
+        };
+        
+        nano.stopBroadcast = function() {
+            if(nano.rtcuser)
+                nano.rtcuser.stopBroadcast();
+        };
+
+        // UI/button event handlers
+
+        nano_registerUI = function() {
+
+            document.getElementById('btn-init').addEventListener('click', function() {
+                nano.init();
+            });
+
+            document.getElementById('btn-startcam').addEventListener('click', function() {
+                nano.startCam();
+            });
+
+            document.getElementById('btn-createstream').addEventListener('click', function() {
+                nano.createStream();
+            });
+
+            document.getElementById('btn-startbroadcast').addEventListener('click', function() {
+                nano.startBroadcast();
+            });
+
+            document.getElementById('btn-stopbroadcast').addEventListener('click', function() {
+                logStatus("Stopping broadcast");
+                nano.stopBroadcast();
+            });
+
+            document.getElementById('btn-playh5livestream').addEventListener('click', function() {
+                console.log("Opening new window to play live stream, URL: ", nano.playoutURL);
+                window.open(nano.playoutURL, '_blank');
+            });
+
+        };
+
+        // log message to console and status element
+
+        formatMsg = function(/*...*/) {
+            var m2='';
+            for (var i = 0; i < arguments.length; i++) {
+              var m1=arguments[i];
+              if(typeof m1 === 'object') {
+                m1=JSON.stringify(m1)+" ";
+                if(m1.data && m1.data.text) m1=m1.data.text+" "+m1;
+              }
+              m2+=(m1+' ');
+            }
+            return m2;
+        };
+
+        logStatus = function(/*...*/) {
+            var m=formatMsg.apply(0,arguments);
+            document.getElementById("status").textContent = m;
+            console.log(m);
+        };
+
+        logStats = function(msg) {
+            var m=formatMsg(msg);
+            document.getElementById("stats").textContent = m;
+            console.log(m);
+        };
+
+        // show error alert
+
+        showError = function(error) {
+            var m=formatMsg(error);
+            logStatus(m);
+            alert(m)
+        };
+
+        // close/stop on unload page
+
+        window.onbeforeunload = function(event) {
+            nano.stopBroadcast();
+        };
+    </script>
+
+</head>
+
+<body>
+    <h1>nanoStream Cloud / WebRTC.live / H5Live</h1>
+    <h2>minimal broadcast sample</h2>
+    <p>This sample creates a live stream with bintu.live and WebRTC.live and creates a player URL to for nanoStream H5Live Player.
+    </p>
+    <hr>
+    <!-- Buttons start/stop/play -->
+    <button id="btn-init">init</button>
+    <button id="btn-startcam">start cam</button>
+    <button id="btn-createstream">create stream</button>
+    <button id="btn-startbroadcast">start broadcast</button>
+    <button id="btn-stopbroadcast">stop broadcast</button>
+    <button id="btn-playh5livestream">play h5live stream</button>
+    <hr>
+    <span id="status">stopped</span>
+    <hr>
+    <span id="stats"></span>
+    <hr>
+    <!-- Video element for camera preview -->
+    <video id="video-local" class="remote-element-video" autoplay playsinline muted style="width:320;height:240"></video>
+
+    <script>
+        nano_registerUI();
+    </script>
+</body>
+
+</html>
