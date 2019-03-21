@@ -2,6 +2,8 @@
 
 (c) 2019 nanocosmos gmbh
 
+> See our full documentation at https://docs.nanocosmos.de
+
 ## How to use WebRTC.live with nanoStream Cloud?
 
 It is very simple to test and use nanoStream WebRTC.live as your live encoder to nanoStream Cloud with integrated nanoStream H5Live Player. You need a camera connected to your computer or built-in on your device, and a WebRTC-compatible browser. We recommend using Google Chrome.
